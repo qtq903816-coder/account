@@ -8,16 +8,18 @@ import {
   Landmark,
   PieChart,
   Plus,
+  RotateCcw,
   Search,
   Settings,
   Trash2,
   Upload,
   WalletCards,
+  X,
 } from 'lucide-react'
 import './App.css'
 
 const STORAGE_KEY = 'pocket-ledger-state-v1'
-
+const quickAmounts = [6, 12, 28, 50, 100, 200]
 const expenseCategories = ['餐饮', '交通', '购物', '居家', '娱乐', '医疗', '其他']
 const incomeCategories = ['工资', '副业', '红包', '理财', '退款', '其他']
 
@@ -53,6 +55,12 @@ const seedTransactions = [
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
+}
+
+function addDays(days) {
+  const date = new Date()
+  date.setDate(date.getDate() + days)
+  return date.toISOString().slice(0, 10)
 }
 
 function currentMonthISO() {
@@ -95,6 +103,8 @@ function App() {
     date: todayISO(),
   })
   const [search, setSearch] = useState('')
+  const [formError, setFormError] = useState('')
+  const [toast, setToast] = useState(null)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ transactions, budget }))
@@ -117,30 +127,40 @@ function App() {
       .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
   }, [search, transactions])
 
+  function showToast(message, action) {
+    setToast({ message, action })
+    window.clearTimeout(showToast.timer)
+    showToast.timer = window.setTimeout(() => setToast(null), 4200)
+  }
+
   function submitTransaction(event) {
     event.preventDefault()
     const amount = Number(form.amount)
-    if (!amount || amount <= 0) return
+    if (!amount || amount <= 0) {
+      setFormError('请输入大于 0 的金额')
+      return
+    }
 
-    setTransactions((items) => [
-      {
-        id: crypto.randomUUID(),
-        type: form.type,
-        amount,
-        category: form.category,
-        note: form.note.trim(),
-        date: form.date,
-        createdAt: Date.now(),
-      },
-      ...items,
-    ])
+    const nextItem = {
+      id: crypto.randomUUID(),
+      type: form.type,
+      amount,
+      category: form.category,
+      note: form.note.trim(),
+      date: form.date,
+      createdAt: Date.now(),
+    }
+    setTransactions((items) => [nextItem, ...items])
     setForm((current) => ({
       ...current,
       amount: '',
       note: '',
       date: todayISO(),
     }))
+    setFormError('')
+    setSearch('')
     setActiveTab('home')
+    showToast('已保存这一笔')
   }
 
   function changeType(type) {
@@ -152,7 +172,17 @@ function App() {
   }
 
   function deleteTransaction(id) {
+    const deleted = transactions.find((item) => item.id === id)
+    if (!deleted) return
+
     setTransactions((items) => items.filter((item) => item.id !== id))
+    showToast('已删除一笔账单', {
+      label: '撤销',
+      onClick: () => {
+        setTransactions((items) => [deleted, ...items].sort((a, b) => b.createdAt - a.createdAt))
+        setToast(null)
+      },
+    })
   }
 
   function exportData() {
@@ -165,6 +195,7 @@ function App() {
     link.download = `记账备份-${todayISO()}.json`
     link.click()
     URL.revokeObjectURL(url)
+    showToast('备份文件已导出')
   }
 
   function importData(event) {
@@ -177,13 +208,23 @@ function App() {
         if (Array.isArray(parsed.transactions)) {
           setTransactions(parsed.transactions)
           setBudget(Number(parsed.budget) || 3000)
+          showToast(`已导入 ${parsed.transactions.length} 条账单`)
+        } else {
+          showToast('导入失败：文件格式不对')
         }
       } catch {
-        alert('导入失败，请确认是本应用导出的 JSON 文件。')
+        showToast('导入失败：请确认是本应用导出的 JSON 文件')
       }
     }
     reader.readAsText(file)
     event.target.value = ''
+  }
+
+  function clearLedger() {
+    if (!window.confirm('确定清空所有账单吗？建议先导出备份。')) return
+    setTransactions([])
+    setSearch('')
+    showToast('账本已清空')
   }
 
   return (
@@ -199,12 +240,15 @@ function App() {
             setSearch={setSearch}
             onAdd={() => setActiveTab('add')}
             onDelete={deleteTransaction}
+            totalCount={transactions.length}
           />
         )}
         {activeTab === 'add' && (
           <AddView
             form={form}
             setForm={setForm}
+            formError={formError}
+            setFormError={setFormError}
             changeType={changeType}
             submitTransaction={submitTransaction}
           />
@@ -216,12 +260,19 @@ function App() {
             setBudget={setBudget}
             exportData={exportData}
             importData={importData}
-            resetDemo={() => setTransactions(seedTransactions)}
+            clearLedger={clearLedger}
+            resetDemo={() => {
+              setTransactions(seedTransactions)
+              setSearch('')
+              showToast('已恢复演示数据')
+            }}
+            transactionCount={transactions.length}
           />
         )}
       </section>
 
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </main>
   )
 }
@@ -240,10 +291,10 @@ function TopBar({ month }) {
   )
 }
 
-function HomeView({ stats, transactions, search, setSearch, onAdd, onDelete }) {
+function HomeView({ stats, transactions, search, setSearch, onAdd, onDelete, totalCount }) {
   return (
     <>
-      <section className="balance-panel">
+      <section className={`balance-panel ${stats.budgetTone}`}>
         <div className="balance-row">
           <div>
             <p className="panel-label">本月结余</p>
@@ -258,6 +309,10 @@ function HomeView({ stats, transactions, search, setSearch, onAdd, onDelete }) {
           <Metric label="支出" value={yuan(stats.expense)} tone="expense" icon={<ArrowUpRight />} />
           <Metric label="预算剩余" value={yuan(stats.remainingBudget)} tone="neutral" icon={<Landmark />} />
         </div>
+        <div className="budget-meta">
+          <span>{stats.budgetMessage}</span>
+          <b>{stats.budgetPercent}%</b>
+        </div>
         <div className="budget-line" aria-label={`预算使用 ${stats.budgetPercent}%`}>
           <span style={{ width: `${Math.min(stats.budgetPercent, 100)}%` }} />
         </div>
@@ -270,10 +325,20 @@ function HomeView({ stats, transactions, search, setSearch, onAdd, onDelete }) {
           onChange={(event) => setSearch(event.target.value)}
           placeholder="搜索分类、备注或日期"
         />
+        {search && (
+          <button type="button" onClick={() => setSearch('')} aria-label="清除搜索内容">
+            <X size={16} />
+          </button>
+        )}
       </div>
 
-      <SectionTitle title="最近账单" action="全部本地保存" />
-      <TransactionList transactions={transactions} onDelete={onDelete} />
+      <SectionTitle title="最近账单" action={`${totalCount} 条本地保存`} />
+      <TransactionList
+        transactions={transactions}
+        onDelete={onDelete}
+        isFiltered={Boolean(search.trim())}
+        onClearSearch={() => setSearch('')}
+      />
 
       <SectionTitle title="本月支出分类" action="支出占比" />
       <CategoryPreview items={stats.categoryStats.slice(0, 4)} total={stats.expense} />
@@ -281,8 +346,13 @@ function HomeView({ stats, transactions, search, setSearch, onAdd, onDelete }) {
   )
 }
 
-function AddView({ form, setForm, changeType, submitTransaction }) {
+function AddView({ form, setForm, formError, setFormError, changeType, submitTransaction }) {
   const categories = form.type === 'expense' ? expenseCategories : incomeCategories
+
+  function setAmount(value) {
+    setForm({ ...form, amount: String(value) })
+    setFormError('')
+  }
 
   return (
     <form className="entry-form" onSubmit={submitTransaction}>
@@ -308,10 +378,22 @@ function AddView({ form, setForm, changeType, submitTransaction }) {
         <input
           inputMode="decimal"
           value={form.amount}
-          onChange={(event) => setForm({ ...form, amount: event.target.value })}
+          onChange={(event) => {
+            setForm({ ...form, amount: event.target.value })
+            setFormError('')
+          }}
           placeholder="0.00"
         />
       </label>
+      {formError && <p className="form-error">{formError}</p>}
+
+      <div className="quick-amounts" aria-label="常用金额">
+        {quickAmounts.map((amount) => (
+          <button type="button" key={amount} onClick={() => setAmount(amount)}>
+            {yuan(amount)}
+          </button>
+        ))}
+      </div>
 
       <div className="category-grid">
         {categories.map((category) => (
@@ -343,6 +425,14 @@ function AddView({ form, setForm, changeType, submitTransaction }) {
           onChange={(event) => setForm({ ...form, date: event.target.value })}
         />
       </label>
+      <div className="date-shortcuts">
+        <button type="button" onClick={() => setForm({ ...form, date: todayISO() })}>
+          今天
+        </button>
+        <button type="button" onClick={() => setForm({ ...form, date: addDays(-1) })}>
+          昨天
+        </button>
+      </div>
 
       <button className="primary-action" type="submit">
         保存这一笔
@@ -354,14 +444,14 @@ function AddView({ form, setForm, changeType, submitTransaction }) {
 function StatsView({ stats }) {
   return (
     <>
-      <section className="stats-panel">
-        <div className="donut" style={{ '--percent': `${stats.budgetPercent}%` }}>
+      <section className={`stats-panel ${stats.budgetTone}`}>
+        <div className="donut" style={{ '--percent': `${Math.min(stats.budgetPercent, 100)}%` }}>
           <span>{stats.budgetPercent}%</span>
         </div>
         <div>
           <p className="panel-label">本月预算使用</p>
           <h2>{yuan(stats.expense)} / {yuan(stats.budget)}</h2>
-          <p className="muted">还可用 {yuan(stats.remainingBudget)}</p>
+          <p className="muted">{stats.budgetMessage}</p>
         </div>
       </section>
 
@@ -384,9 +474,21 @@ function StatsView({ stats }) {
   )
 }
 
-function SettingsView({ budget, setBudget, exportData, importData, resetDemo }) {
+function SettingsView({
+  budget,
+  setBudget,
+  exportData,
+  importData,
+  clearLedger,
+  resetDemo,
+  transactionCount,
+}) {
   return (
     <div className="settings-list">
+      <div className="settings-summary">
+        <strong>{transactionCount}</strong>
+        <span>条账单保存在本机浏览器</span>
+      </div>
       <label className="field">
         <span>本月预算</span>
         <input
@@ -404,9 +506,13 @@ function SettingsView({ budget, setBudget, exportData, importData, resetDemo }) 
         导入 JSON 备份
         <input type="file" accept="application/json" onChange={importData} />
       </label>
-      <button className="settings-action danger" type="button" onClick={resetDemo}>
-        <Trash2 size={18} />
+      <button className="settings-action" type="button" onClick={resetDemo}>
+        <RotateCcw size={18} />
         恢复演示数据
+      </button>
+      <button className="settings-action danger" type="button" onClick={clearLedger}>
+        <Trash2 size={18} />
+        清空账本
       </button>
     </div>
   )
@@ -431,13 +537,18 @@ function SectionTitle({ title, action }) {
   )
 }
 
-function TransactionList({ transactions, onDelete }) {
+function TransactionList({ transactions, onDelete, isFiltered, onClearSearch }) {
   if (!transactions.length) {
     return (
       <div className="empty-state">
         <CalendarDays size={28} />
-        <strong>还没有账单</strong>
-        <span>点底部“记账”开始记录。</span>
+        <strong>{isFiltered ? '没有匹配账单' : '还没有账单'}</strong>
+        <span>{isFiltered ? '换个关键词试试。' : '点底部“记账”开始记录。'}</span>
+        {isFiltered && (
+          <button type="button" onClick={onClearSearch}>
+            清空搜索
+          </button>
+        )}
       </div>
     )
   }
@@ -451,10 +562,11 @@ function TransactionList({ transactions, onDelete }) {
           </div>
           <div className="transaction-main">
             <strong>{item.category}</strong>
-            <span>{item.note || item.date}</span>
+            <span>{[item.note, formatDate(item.date)].filter(Boolean).join(' · ')}</span>
           </div>
           <div className={`transaction-amount ${item.type}`}>
-            {item.type === 'expense' ? '-' : '+'}{yuan(item.amount)}
+            {item.type === 'expense' ? '-' : '+'}
+            {yuan(item.amount)}
           </div>
           <button type="button" onClick={() => onDelete(item.id)} aria-label="删除账单">
             <Trash2 size={16} />
@@ -511,6 +623,30 @@ function BottomNav({ activeTab, setActiveTab }) {
   )
 }
 
+function Toast({ toast, onClose }) {
+  if (!toast) return null
+  return (
+    <div className="toast" role="status">
+      <span>{toast.message}</span>
+      {toast.action && (
+        <button type="button" onClick={toast.action.onClick}>
+          {toast.action.label}
+        </button>
+      )}
+      <button type="button" onClick={onClose} aria-label="关闭提示">
+        <X size={16} />
+      </button>
+    </div>
+  )
+}
+
+function formatDate(value) {
+  const today = todayISO()
+  if (value === today) return '今天'
+  if (value === addDays(-1)) return '昨天'
+  return value.slice(5).replace('-', '/')
+}
+
 function buildStats(transactions, budget) {
   const month = currentMonthISO()
   const monthItems = transactions.filter((item) => item.date.startsWith(month))
@@ -533,6 +669,8 @@ function buildStats(transactions, budget) {
       percent: expense ? Math.round((amount / expense) * 100) : 0,
     }))
     .sort((a, b) => b.amount - a.amount)
+  const budgetPercent = budget ? Math.round((expense / budget) * 100) : 0
+  const budgetTone = budgetPercent >= 100 ? 'over-budget' : budgetPercent >= 80 ? 'near-budget' : ''
 
   return {
     monthLabel: `${Number(month.slice(5))}月账本`,
@@ -541,7 +679,14 @@ function buildStats(transactions, budget) {
     balance: income - expense,
     budget,
     remainingBudget: Math.max(budget - expense, 0),
-    budgetPercent: budget ? Math.round((expense / budget) * 100) : 0,
+    budgetPercent,
+    budgetTone,
+    budgetMessage:
+      budgetPercent >= 100
+        ? `已超预算 ${yuan(expense - budget)}`
+        : budgetPercent >= 80
+          ? `接近预算，还可用 ${yuan(Math.max(budget - expense, 0))}`
+          : `还可用 ${yuan(Math.max(budget - expense, 0))}`,
     categoryStats: categoryStats.length ? categoryStats : [{ category: '暂无支出', amount: 0, percent: 0 }],
   }
 }
