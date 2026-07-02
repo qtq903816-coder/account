@@ -442,6 +442,32 @@ function AddView({ form, setForm, formError, setFormError, changeType, submitTra
 }
 
 function StatsView({ stats }) {
+  const [period, setPeriod] = useState('day')
+  const periodViews = {
+    day: {
+      title: '每天支出',
+      action: '最近 30 天',
+      totalLabel: '今日支出',
+      total: stats.todayExpense,
+      rows: stats.dailyExpenseRows,
+    },
+    month: {
+      title: '每月支出',
+      action: '按月份汇总',
+      totalLabel: '本月支出',
+      total: stats.expense,
+      rows: stats.monthlyExpenseRows,
+    },
+    year: {
+      title: '每年支出',
+      action: '按年份汇总',
+      totalLabel: '今年支出',
+      total: stats.yearExpense,
+      rows: stats.yearlyExpenseRows,
+    },
+  }
+  const currentView = periodViews[period]
+
   return (
     <>
       <section className={`stats-panel ${stats.budgetTone}`}>
@@ -454,6 +480,40 @@ function StatsView({ stats }) {
           <p className="muted">{stats.budgetMessage}</p>
         </div>
       </section>
+
+      <div className="period-tabs" role="tablist" aria-label="支出周期">
+        {Object.entries(periodViews).map(([key, view]) => (
+          <button
+            type="button"
+            key={key}
+            className={period === key ? 'selected' : ''}
+            onClick={() => setPeriod(key)}
+          >
+            {view.title.replace('支出', '')}
+          </button>
+        ))}
+      </div>
+
+      <section className="period-summary">
+        <span>{currentView.totalLabel}</span>
+        <strong>{yuan(currentView.total)}</strong>
+      </section>
+
+      <SectionTitle title={currentView.title} action={currentView.action} />
+      <div className="period-list">
+        {currentView.rows.map((item) => (
+          <div className="period-row" key={item.key}>
+            <div>
+              <strong>{item.label}</strong>
+              <span>{item.count} 笔</span>
+            </div>
+            <div className="rank-track">
+              <span style={{ width: `${item.percent}%` }} />
+            </div>
+            <b>{yuan(item.amount)}</b>
+          </div>
+        ))}
+      </div>
 
       <SectionTitle title="分类排行" action="本月支出" />
       <div className="rank-list">
@@ -647,13 +707,67 @@ function formatDate(value) {
   return value.slice(5).replace('-', '/')
 }
 
+function formatPeriodLabel(key, period) {
+  if (period === 'day') {
+    if (key === todayISO()) return '今天'
+    if (key === addDays(-1)) return '昨天'
+    return key.slice(5).replace('-', '/')
+  }
+  if (period === 'month') {
+    const [year, month] = key.split('-')
+    return `${year}年${Number(month)}月`
+  }
+  return `${key}年`
+}
+
+function expenseRowsByPeriod(transactions, period) {
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - 29)
+  const cutoffKey = cutoff.toISOString().slice(0, 10)
+  const group = new Map()
+  transactions
+    .filter((item) => item.type === 'expense')
+    .filter((item) => period !== 'day' || item.date >= cutoffKey)
+    .forEach((item) => {
+      const key =
+        period === 'day' ? item.date : period === 'month' ? item.date.slice(0, 7) : item.date.slice(0, 4)
+      const current = group.get(key) || { key, amount: 0, count: 0 }
+      current.amount += Number(item.amount)
+      current.count += 1
+      group.set(key, current)
+    })
+
+  const rows = Array.from(group.values()).sort((a, b) => b.key.localeCompare(a.key))
+  const limitedRows = rows
+  const maxAmount = Math.max(...limitedRows.map((item) => item.amount), 0)
+  if (!limitedRows.length) {
+    return [{ key: `empty-${period}`, label: '暂无支出', amount: 0, count: 0, percent: 0 }]
+  }
+
+  return limitedRows.map((item) => ({
+    ...item,
+    label: formatPeriodLabel(item.key, period),
+    percent: maxAmount ? Math.max(Math.round((item.amount / maxAmount) * 100), 4) : 0,
+  }))
+}
+
 function buildStats(transactions, budget) {
   const month = currentMonthISO()
+  const today = todayISO()
+  const year = today.slice(0, 4)
   const monthItems = transactions.filter((item) => item.date.startsWith(month))
+  const todayItems = transactions.filter((item) => item.date === today)
+  const yearItems = transactions.filter((item) => item.date.startsWith(year))
   const income = monthItems
     .filter((item) => item.type === 'income')
     .reduce((sum, item) => sum + Number(item.amount), 0)
   const expense = monthItems
+    .filter((item) => item.type === 'expense')
+    .reduce((sum, item) => sum + Number(item.amount), 0)
+  const todayExpense = todayItems
+    .filter((item) => item.type === 'expense')
+    .reduce((sum, item) => sum + Number(item.amount), 0)
+  const yearExpense = yearItems
     .filter((item) => item.type === 'expense')
     .reduce((sum, item) => sum + Number(item.amount), 0)
   const categoryMap = monthItems
@@ -687,6 +801,11 @@ function buildStats(transactions, budget) {
         : budgetPercent >= 80
           ? `接近预算，还可用 ${yuan(Math.max(budget - expense, 0))}`
           : `还可用 ${yuan(Math.max(budget - expense, 0))}`,
+    todayExpense,
+    yearExpense,
+    dailyExpenseRows: expenseRowsByPeriod(transactions, 'day'),
+    monthlyExpenseRows: expenseRowsByPeriod(transactions, 'month'),
+    yearlyExpenseRows: expenseRowsByPeriod(transactions, 'year'),
     categoryStats: categoryStats.length ? categoryStats : [{ category: '暂无支出', amount: 0, percent: 0 }],
   }
 }
