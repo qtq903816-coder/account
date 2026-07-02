@@ -499,21 +499,25 @@ function StatsView({ stats }) {
         <strong>{yuan(currentView.total)}</strong>
       </section>
 
-      <SectionTitle title={currentView.title} action={currentView.action} />
-      <div className="period-list">
-        {currentView.rows.map((item) => (
-          <div className="period-row" key={item.key}>
-            <div>
-              <strong>{item.label}</strong>
-              <span>{item.count} 笔</span>
+      <SectionTitle title={period === 'day' ? '最近 30 天日账单' : currentView.title} action={currentView.action} />
+      {period === 'day' ? (
+        <CalendarGrid days={currentView.rows} />
+      ) : (
+        <div className="period-list">
+          {currentView.rows.map((item) => (
+            <div className="period-row" key={item.key}>
+              <div>
+                <strong>{item.label}</strong>
+                <span>{item.count} 笔</span>
+              </div>
+              <div className="rank-track">
+                <span style={{ width: `${item.percent}%` }} />
+              </div>
+              <b>{yuan(item.amount)}</b>
             </div>
-            <div className="rank-track">
-              <span style={{ width: `${item.percent}%` }} />
-            </div>
-            <b>{yuan(item.amount)}</b>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       <SectionTitle title="分类排行" action="本月支出" />
       <div className="rank-list">
@@ -531,6 +535,26 @@ function StatsView({ stats }) {
         ))}
       </div>
     </>
+  )
+}
+
+function CalendarGrid({ days }) {
+  return (
+    <div className="calendar-grid" aria-label="最近 30 天日账单">
+      {days.map((day) => (
+        <div
+          className={`calendar-day ${day.amount ? 'has-spend' : ''} ${day.key === todayISO() ? 'today' : ''}`}
+          key={day.key}
+          style={{ '--intensity': day.intensity }}
+        >
+          <span>
+            {day.label}
+            <em>{day.weekday}</em>
+          </span>
+          <strong>{day.amount ? yuan(day.amount) : '-'}</strong>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -736,6 +760,26 @@ function expenseRowsByPeriod(transactions, period) {
       current.count += 1
       group.set(key, current)
     })
+
+  if (period === 'day') {
+    const days = Array.from({ length: 30 }, (_, index) => {
+      const date = new Date()
+      date.setDate(date.getDate() - (29 - index))
+      const key = date.toISOString().slice(0, 10)
+      const value = group.get(key) || { key, amount: 0, count: 0 }
+      return {
+        ...value,
+        weekday: new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(date),
+      }
+    })
+    const maxAmount = Math.max(...days.map((item) => item.amount), 0)
+    return days.map((item) => ({
+      ...item,
+      label: formatPeriodLabel(item.key, period),
+      percent: maxAmount && item.amount ? Math.max(Math.round((item.amount / maxAmount) * 100), 4) : 0,
+      intensity: maxAmount && item.amount ? 0.12 + (item.amount / maxAmount) * 0.78 : 0,
+    }))
+  }
 
   const rows = Array.from(group.values()).sort((a, b) => b.key.localeCompare(a.key))
   const limitedRows = rows
