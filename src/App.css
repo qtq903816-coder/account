@@ -252,6 +252,13 @@
   gap: 8px;
 }
 
+.transaction-list {
+  max-height: min(58vh, 520px);
+  overflow-y: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+}
+
 .category-preview {
   display: grid;
   grid-template-columns: 112px minmax(0, 1fr);
@@ -404,6 +411,7 @@
 
 .type-toggle button,
 .category-grid button,
+.tag-add button,
 .quick-amounts button,
 .date-shortcuts button,
 .primary-action,
@@ -445,7 +453,8 @@
 }
 
 .amount-field input,
-.field input {
+.field input,
+.tag-add input {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--border);
@@ -463,7 +472,8 @@
   font-weight: 760;
 }
 
-.field input {
+.field input,
+.tag-add input {
   height: 46px;
   padding: 0 12px;
 }
@@ -512,6 +522,19 @@
 .category-grid .selected {
   color: white;
   background: var(--green);
+}
+
+.tag-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 8px;
+  margin-top: -4px;
+}
+
+.tag-add button {
+  min-height: 46px;
+  color: white;
+  background: var(--ink);
 }
 
 .primary-action {
@@ -685,6 +708,9 @@
   border-radius: 8px;
   color: var(--muted);
   background: var(--soft);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .calendar-day.has-spend {
@@ -698,6 +724,11 @@
 .calendar-day.today {
   border-color: var(--green);
   box-shadow: inset 0 0 0 1px var(--green);
+}
+
+.calendar-day.selected {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink), var(--shadow-soft);
 }
 
 .calendar-day span,
@@ -730,6 +761,54 @@
   color: var(--ink);
   font-size: 13px;
   line-height: 1.1;
+}
+
+.day-detail {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.day-detail .transaction-list {
+  max-height: 280px;
+}
+
+.day-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.day-detail-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.day-detail-head span,
+.day-detail-head b {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.day-detail-head strong {
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.day-empty {
+  padding: 18px 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--soft);
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .settings-action {

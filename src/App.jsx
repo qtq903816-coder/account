@@ -20,8 +20,10 @@ import './App.css'
 
 const STORAGE_KEY = 'pocket-ledger-state-v1'
 const quickAmounts = [6, 12, 28, 50, 100, 200]
-const expenseCategories = ['餐饮', '交通', '购物', '居家', '娱乐', '医疗', '其他']
-const incomeCategories = ['工资', '副业', '红包', '理财', '退款', '其他']
+const defaultCategories = {
+  expense: ['餐饮', '交通', '购物', '居家', '娱乐', '医疗', '其他'],
+  income: ['工资', '副业', '红包', '理财', '退款', '其他'],
+}
 
 const seedTransactions = [
   {
@@ -79,26 +81,48 @@ function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) {
-      return { transactions: seedTransactions, budget: 3000 }
+      return { transactions: seedTransactions, budget: 3000, categories: defaultCategories }
     }
     const parsed = JSON.parse(raw)
     return {
       transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
       budget: Number(parsed.budget) || 3000,
+      categories: normalizeCategories(parsed.categories),
     }
   } catch {
-    return { transactions: seedTransactions, budget: 3000 }
+    return { transactions: seedTransactions, budget: 3000, categories: defaultCategories }
   }
 }
 
+function normalizeCategories(categories) {
+  return {
+    expense: mergeUnique(defaultCategories.expense, categories?.expense),
+    income: mergeUnique(defaultCategories.income, categories?.income),
+  }
+}
+
+function mergeUnique(...groups) {
+  return Array.from(
+    new Set(
+      groups
+        .flat()
+        .filter((item) => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  )
+}
+
 function App() {
+  const initialState = useMemo(() => loadState(), [])
   const [activeTab, setActiveTab] = useState('home')
-  const [transactions, setTransactions] = useState(() => loadState().transactions)
-  const [budget, setBudget] = useState(() => loadState().budget)
+  const [transactions, setTransactions] = useState(initialState.transactions)
+  const [budget, setBudget] = useState(initialState.budget)
+  const [categories, setCategories] = useState(initialState.categories)
   const [form, setForm] = useState({
     type: 'expense',
     amount: '',
-    category: '餐饮',
+    category: initialState.categories.expense[0],
     note: '',
     date: todayISO(),
   })
@@ -107,8 +131,8 @@ function App() {
   const [toast, setToast] = useState(null)
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ transactions, budget }))
-  }, [transactions, budget])
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ transactions, budget, categories }))
+  }, [transactions, budget, categories])
 
   useEffect(() => {
     if ('serviceWorker' in navigator) {
@@ -167,8 +191,29 @@ function App() {
     setForm((current) => ({
       ...current,
       type,
-      category: type === 'expense' ? expenseCategories[0] : incomeCategories[0],
+      category: categories[type][0],
     }))
+  }
+
+  function addCategory(name) {
+    const nextName = name.trim()
+    if (!nextName) {
+      setFormError('请输入标签名称')
+      return
+    }
+    if (categories[form.type].includes(nextName)) {
+      setForm({ ...form, category: nextName })
+      setFormError('')
+      showToast('已选中已有标签')
+      return
+    }
+    setCategories((current) => ({
+      ...current,
+      [form.type]: [...current[form.type], nextName],
+    }))
+    setForm({ ...form, category: nextName })
+    setFormError('')
+    showToast(`已新增标签：${nextName}`)
   }
 
   function deleteTransaction(id) {
@@ -186,7 +231,7 @@ function App() {
   }
 
   function exportData() {
-    const blob = new Blob([JSON.stringify({ transactions, budget }, null, 2)], {
+    const blob = new Blob([JSON.stringify({ transactions, budget, categories }, null, 2)], {
       type: 'application/json',
     })
     const url = URL.createObjectURL(blob)
@@ -208,6 +253,7 @@ function App() {
         if (Array.isArray(parsed.transactions)) {
           setTransactions(parsed.transactions)
           setBudget(Number(parsed.budget) || 3000)
+          setCategories(normalizeCategories(parsed.categories))
           showToast(`已导入 ${parsed.transactions.length} 条账单`)
         } else {
           showToast('导入失败：文件格式不对')
@@ -235,7 +281,7 @@ function App() {
         {activeTab === 'home' && (
           <HomeView
             stats={stats}
-            transactions={filteredTransactions.slice(0, 6)}
+            transactions={filteredTransactions}
             search={search}
             setSearch={setSearch}
             onAdd={() => setActiveTab('add')}
@@ -250,10 +296,12 @@ function App() {
             formError={formError}
             setFormError={setFormError}
             changeType={changeType}
+            categories={categories}
+            addCategory={addCategory}
             submitTransaction={submitTransaction}
           />
         )}
-        {activeTab === 'stats' && <StatsView stats={stats} />}
+        {activeTab === 'stats' && <StatsView stats={stats} transactions={transactions} />}
         {activeTab === 'settings' && (
           <SettingsView
             budget={budget}
@@ -263,6 +311,7 @@ function App() {
             clearLedger={clearLedger}
             resetDemo={() => {
               setTransactions(seedTransactions)
+              setCategories(defaultCategories)
               setSearch('')
               showToast('已恢复演示数据')
             }}
@@ -346,12 +395,27 @@ function HomeView({ stats, transactions, search, setSearch, onAdd, onDelete, tot
   )
 }
 
-function AddView({ form, setForm, formError, setFormError, changeType, submitTransaction }) {
-  const categories = form.type === 'expense' ? expenseCategories : incomeCategories
+function AddView({
+  form,
+  setForm,
+  formError,
+  setFormError,
+  changeType,
+  categories,
+  addCategory,
+  submitTransaction,
+}) {
+  const [newCategory, setNewCategory] = useState('')
+  const categoryOptions = categories[form.type]
 
   function setAmount(value) {
     setForm({ ...form, amount: String(value) })
     setFormError('')
+  }
+
+  function submitCategory() {
+    addCategory(newCategory)
+    setNewCategory('')
   }
 
   return (
@@ -396,7 +460,7 @@ function AddView({ form, setForm, formError, setFormError, changeType, submitTra
       </div>
 
       <div className="category-grid">
-        {categories.map((category) => (
+        {categoryOptions.map((category) => (
           <button
             key={category}
             type="button"
@@ -406,6 +470,21 @@ function AddView({ form, setForm, formError, setFormError, changeType, submitTra
             {category}
           </button>
         ))}
+      </div>
+
+      <div className="tag-add">
+        <input
+          value={newCategory}
+          onChange={(event) => setNewCategory(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              submitCategory()
+            }
+          }}
+          placeholder={form.type === 'expense' ? '新增支出标签' : '新增收入标签'}
+        />
+        <button type="button" onClick={submitCategory}>新增</button>
       </div>
 
       <label className="field">
@@ -441,8 +520,9 @@ function AddView({ form, setForm, formError, setFormError, changeType, submitTra
   )
 }
 
-function StatsView({ stats }) {
+function StatsView({ stats, transactions }) {
   const [period, setPeriod] = useState('day')
+  const [selectedDate, setSelectedDate] = useState(todayISO())
   const periodViews = {
     day: {
       title: '每天支出',
@@ -467,6 +547,10 @@ function StatsView({ stats }) {
     },
   }
   const currentView = periodViews[period]
+  const selectedDay = currentView.rows.find((day) => day.key === selectedDate) || currentView.rows.at(-1)
+  const selectedDayItems = transactions
+    .filter((item) => item.type === 'expense' && item.date === selectedDay?.key)
+    .sort((a, b) => b.createdAt - a.createdAt)
 
   return (
     <>
@@ -501,7 +585,10 @@ function StatsView({ stats }) {
 
       <SectionTitle title={period === 'day' ? '最近 30 天日账单' : currentView.title} action={currentView.action} />
       {period === 'day' ? (
-        <CalendarGrid days={currentView.rows} />
+        <>
+          <CalendarGrid days={currentView.rows} selectedDate={selectedDay?.key} onSelectDate={setSelectedDate} />
+          <DayBillDetail day={selectedDay} transactions={selectedDayItems} />
+        </>
       ) : (
         <div className="period-list">
           {currentView.rows.map((item) => (
@@ -538,23 +625,47 @@ function StatsView({ stats }) {
   )
 }
 
-function CalendarGrid({ days }) {
+function CalendarGrid({ days, selectedDate, onSelectDate }) {
   return (
     <div className="calendar-grid" aria-label="最近 30 天日账单">
       {days.map((day) => (
-        <div
-          className={`calendar-day ${day.amount ? 'has-spend' : ''} ${day.key === todayISO() ? 'today' : ''}`}
+        <button
+          type="button"
+          className={`calendar-day ${day.amount ? 'has-spend' : ''} ${day.key === todayISO() ? 'today' : ''} ${day.key === selectedDate ? 'selected' : ''}`}
           key={day.key}
+          onClick={() => onSelectDate(day.key)}
           style={{ '--intensity': day.intensity }}
+          aria-label={`${day.label}支出${yuan(day.amount)}`}
         >
           <span>
             {day.label}
             <em>{day.weekday}</em>
           </span>
           <strong>{day.amount ? yuan(day.amount) : '-'}</strong>
-        </div>
+        </button>
       ))}
     </div>
+  )
+}
+
+function DayBillDetail({ day, transactions }) {
+  if (!day) return null
+
+  return (
+    <section className="day-detail" aria-label={`${day.label}消费记录`}>
+      <div className="day-detail-head">
+        <div>
+          <span>{day.label}</span>
+          <strong>{day.amount ? yuan(day.amount) : '暂无支出'}</strong>
+        </div>
+        <b>{day.count} 笔</b>
+      </div>
+      {transactions.length ? (
+        <TransactionList transactions={transactions} />
+      ) : (
+        <div className="day-empty">这一天还没有消费记录</div>
+      )}
+    </section>
   )
 }
 
@@ -652,9 +763,11 @@ function TransactionList({ transactions, onDelete, isFiltered, onClearSearch }) 
             {item.type === 'expense' ? '-' : '+'}
             {yuan(item.amount)}
           </div>
-          <button type="button" onClick={() => onDelete(item.id)} aria-label="删除账单">
-            <Trash2 size={16} />
-          </button>
+          {onDelete ? (
+            <button type="button" onClick={() => onDelete(item.id)} aria-label="删除账单">
+              <Trash2 size={16} />
+            </button>
+          ) : null}
         </article>
       ))}
     </div>
