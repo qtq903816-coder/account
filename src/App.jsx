@@ -6,6 +6,7 @@ import {
   Download,
   Home,
   Landmark,
+  Pencil,
   PieChart,
   Plus,
   RotateCcw,
@@ -135,6 +136,15 @@ function App() {
   })
   const [search, setSearch] = useState('')
   const [formError, setFormError] = useState('')
+  const [quickForm, setQuickForm] = useState({
+    amount: '',
+    category: initialState.categories.expense[0],
+    note: '',
+    date: todayISO(),
+  })
+  const [quickError, setQuickError] = useState('')
+  const [editForm, setEditForm] = useState(null)
+  const [editError, setEditError] = useState('')
   const [toast, setToast] = useState(null)
   const [todayKey, setTodayKey] = useState(todayISO())
 
@@ -161,8 +171,16 @@ function App() {
   useEffect(() => {
     const yesterday = addDays(-1, dateFromISO(todayKey))
     setForm((current) => (current.date === yesterday ? { ...current, date: todayKey } : current))
+    setQuickForm((current) => (current.date === yesterday ? { ...current, date: todayKey } : current))
   }, [todayKey])
 
+  const sortedCategories = useMemo(
+    () => ({
+      expense: sortCategoriesByUse(categories.expense, 'expense', transactions),
+      income: sortCategoriesByUse(categories.income, 'income', transactions),
+    }),
+    [categories, transactions],
+  )
   const stats = useMemo(() => buildStats(transactions, budget, todayKey), [transactions, budget, todayKey])
   const filteredTransactions = useMemo(() => {
     const keyword = search.trim()
@@ -180,41 +198,67 @@ function App() {
     showToast.timer = window.setTimeout(() => setToast(null), 4200)
   }
 
-  function submitTransaction(event) {
+  useEffect(() => {
+    setForm((current) => {
+      const nextOptions = sortedCategories[current.type]
+      return nextOptions.includes(current.category) ? current : { ...current, category: nextOptions[0] }
+    })
+    setQuickForm((current) =>
+      sortedCategories.expense.includes(current.category) ? current : { ...current, category: sortedCategories.expense[0] },
+    )
+  }, [sortedCategories])
+
+  function saveTransaction(event, sourceForm, setError, onSaved) {
     event.preventDefault()
-    const amount = Number(form.amount)
+    const amount = Number(sourceForm.amount)
     if (!amount || amount <= 0) {
-      setFormError('请输入大于 0 的金额')
+      setError('请输入大于 0 的金额')
       return
     }
 
     const nextItem = {
       id: crypto.randomUUID(),
-      type: form.type,
+      type: sourceForm.type || 'expense',
       amount,
-      category: form.category,
-      note: form.note.trim(),
-      date: form.date,
+      category: sourceForm.category,
+      note: sourceForm.note.trim(),
+      date: sourceForm.date,
       createdAt: Date.now(),
     }
     setTransactions((items) => [nextItem, ...items])
-    setForm((current) => ({
-      ...current,
-      amount: '',
-      note: '',
-      date: todayISO(),
-    }))
-    setFormError('')
+    onSaved()
+    setError('')
     setSearch('')
-    setActiveTab('home')
     showToast('已保存这一笔')
+  }
+
+  function submitTransaction(event) {
+    saveTransaction(event, form, setFormError, () => {
+      setForm((current) => ({
+        ...current,
+        amount: '',
+        note: '',
+        date: todayISO(),
+      }))
+    })
+  }
+
+  function submitQuickExpense(event) {
+    saveTransaction(event, { ...quickForm, type: 'expense' }, setQuickError, () => {
+      setQuickForm((current) => ({
+        ...current,
+        amount: '',
+        note: '',
+        date: todayISO(),
+      }))
+    })
   }
 
   function changeType(type) {
     setForm((current) => ({
       ...current,
       type,
-      category: categories[type][0],
+      category: sortedCategories[type][0],
     }))
   }
 
@@ -244,6 +288,10 @@ function App() {
     if (!deleted) return
 
     setTransactions((items) => items.filter((item) => item.id !== id))
+    if (editForm?.id === id) {
+      setEditForm(null)
+      setEditError('')
+    }
     showToast('已删除一笔账单', {
       label: '撤销',
       onClick: () => {
@@ -251,6 +299,44 @@ function App() {
         setToast(null)
       },
     })
+  }
+
+  function startEditTransaction(item) {
+    setEditForm({
+      id: item.id,
+      type: item.type,
+      amount: String(item.amount),
+      category: item.category,
+      note: item.note || '',
+      date: item.date,
+    })
+    setEditError('')
+  }
+
+  function saveEditedTransaction(event) {
+    event.preventDefault()
+    const amount = Number(editForm.amount)
+    if (!amount || amount <= 0) {
+      setEditError('请输入大于 0 的金额')
+      return
+    }
+    setTransactions((items) =>
+      items.map((item) =>
+        item.id === editForm.id
+          ? {
+              ...item,
+              type: editForm.type,
+              amount,
+              category: editForm.category,
+              note: editForm.note.trim(),
+              date: editForm.date,
+            }
+          : item,
+      ),
+    )
+    setEditForm(null)
+    setEditError('')
+    showToast('已更新账单')
   }
 
   function exportData() {
@@ -307,8 +393,15 @@ function App() {
             transactions={filteredTransactions}
             search={search}
             setSearch={setSearch}
+            quickForm={quickForm}
+            setQuickForm={setQuickForm}
+            quickError={quickError}
+            setQuickError={setQuickError}
+            quickCategories={sortedCategories.expense}
+            submitQuickExpense={submitQuickExpense}
             onAdd={() => setActiveTab('add')}
             onDelete={deleteTransaction}
+            onEdit={startEditTransaction}
             totalCount={transactions.length}
           />
         )}
@@ -319,9 +412,12 @@ function App() {
             formError={formError}
             setFormError={setFormError}
             changeType={changeType}
-            categories={categories}
+            categories={sortedCategories}
             addCategory={addCategory}
             submitTransaction={submitTransaction}
+            recentTransactions={filteredTransactions.slice(0, 5)}
+            onDelete={deleteTransaction}
+            onEdit={startEditTransaction}
           />
         )}
         {activeTab === 'stats' && <StatsView stats={stats} transactions={transactions} todayKey={todayKey} />}
@@ -344,6 +440,18 @@ function App() {
       </section>
 
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <EditTransactionDialog
+        editForm={editForm}
+        setEditForm={setEditForm}
+        categories={sortedCategories}
+        error={editError}
+        setError={setEditError}
+        onSave={saveEditedTransaction}
+        onClose={() => {
+          setEditForm(null)
+          setEditError('')
+        }}
+      />
       <Toast toast={toast} onClose={() => setToast(null)} />
     </main>
   )
@@ -363,22 +471,46 @@ function TopBar({ month }) {
   )
 }
 
-function HomeView({ stats, transactions, search, setSearch, onAdd, onDelete, totalCount }) {
+function HomeView({
+  stats,
+  transactions,
+  search,
+  setSearch,
+  quickForm,
+  setQuickForm,
+  quickError,
+  setQuickError,
+  quickCategories,
+  submitQuickExpense,
+  onAdd,
+  onDelete,
+  onEdit,
+  totalCount,
+}) {
   return (
     <>
+      <QuickExpensePanel
+        form={quickForm}
+        setForm={setQuickForm}
+        formError={quickError}
+        setFormError={setQuickError}
+        categories={quickCategories}
+        onSubmit={submitQuickExpense}
+      />
+
       <section className={`balance-panel ${stats.budgetTone}`}>
         <div className="balance-row">
           <div>
-            <p className="panel-label">本月结余</p>
-            <strong>{yuan(stats.balance)}</strong>
+            <p className="panel-label">今日支出</p>
+            <strong>{yuan(stats.todayExpense)}</strong>
           </div>
           <button className="add-button" type="button" onClick={onAdd} aria-label="记一笔">
             <Plus size={22} />
           </button>
         </div>
         <div className="metric-grid">
-          <Metric label="收入" value={yuan(stats.income)} tone="income" icon={<ArrowDownLeft />} />
-          <Metric label="支出" value={yuan(stats.expense)} tone="expense" icon={<ArrowUpRight />} />
+          <Metric label="本月支出" value={yuan(stats.expense)} tone="expense" icon={<ArrowUpRight />} />
+          <Metric label="今日可用" value={yuan(stats.dailyAllowance)} tone="income" icon={<ArrowDownLeft />} />
           <Metric label="预算剩余" value={yuan(stats.remainingBudget)} tone="neutral" icon={<Landmark />} />
         </div>
         <div className="budget-meta">
@@ -408,13 +540,65 @@ function HomeView({ stats, transactions, search, setSearch, onAdd, onDelete, tot
       <TransactionList
         transactions={transactions}
         onDelete={onDelete}
+        onEdit={onEdit}
         isFiltered={Boolean(search.trim())}
         onClearSearch={() => setSearch('')}
       />
-
-      <SectionTitle title="本月支出分类" action="支出占比" />
-      <CategoryPreview items={stats.categoryStats.slice(0, 4)} total={stats.expense} />
     </>
+  )
+}
+
+function QuickExpensePanel({ form, setForm, formError, setFormError, categories, onSubmit }) {
+  function setAmount(value) {
+    setForm({ ...form, amount: String(value) })
+    setFormError('')
+  }
+
+  return (
+    <form className="quick-entry" onSubmit={onSubmit}>
+      <label className="amount-field compact">
+        <span>快速记消费</span>
+        <input
+          inputMode="decimal"
+          value={form.amount}
+          onChange={(event) => {
+            setForm({ ...form, amount: event.target.value })
+            setFormError('')
+          }}
+          placeholder="0.00"
+        />
+      </label>
+      {formError && <p className="form-error">{formError}</p>}
+      <div className="quick-amounts" aria-label="常用金额">
+        {quickAmounts.map((amount) => (
+          <button type="button" key={amount} onClick={() => setAmount(amount)}>
+            {yuan(amount)}
+          </button>
+        ))}
+      </div>
+      <div className="quick-category-row" aria-label="常用分类">
+        {categories.slice(0, 5).map((category) => (
+          <button
+            type="button"
+            key={category}
+            className={form.category === category ? 'selected' : ''}
+            onClick={() => setForm({ ...form, category })}
+          >
+            {category}
+          </button>
+        ))}
+      </div>
+      <div className="quick-extra">
+        <input
+          value={form.note}
+          onChange={(event) => setForm({ ...form, note: event.target.value })}
+          placeholder="备注，可不填"
+        />
+        <button className="primary-action" type="submit">
+          保存
+        </button>
+      </div>
+    </form>
   )
 }
 
@@ -427,6 +611,9 @@ function AddView({
   categories,
   addCategory,
   submitTransaction,
+  recentTransactions,
+  onDelete,
+  onEdit,
 }) {
   const [newCategory, setNewCategory] = useState('')
   const categoryOptions = categories[form.type]
@@ -442,106 +629,114 @@ function AddView({
   }
 
   return (
-    <form className="entry-form" onSubmit={submitTransaction}>
-      <div className="type-toggle" role="tablist" aria-label="收支类型">
-        <button
-          type="button"
-          className={form.type === 'expense' ? 'selected' : ''}
-          onClick={() => changeType('expense')}
-        >
-          支出
-        </button>
-        <button
-          type="button"
-          className={form.type === 'income' ? 'selected income' : ''}
-          onClick={() => changeType('income')}
-        >
-          收入
-        </button>
-      </div>
-
-      <label className="amount-field">
-        <span>金额</span>
-        <input
-          inputMode="decimal"
-          value={form.amount}
-          onChange={(event) => {
-            setForm({ ...form, amount: event.target.value })
-            setFormError('')
-          }}
-          placeholder="0.00"
-        />
-      </label>
-      {formError && <p className="form-error">{formError}</p>}
-
-      <div className="quick-amounts" aria-label="常用金额">
-        {quickAmounts.map((amount) => (
-          <button type="button" key={amount} onClick={() => setAmount(amount)}>
-            {yuan(amount)}
+    <>
+      <form className="entry-form" onSubmit={submitTransaction}>
+        <div className="type-toggle" role="tablist" aria-label="收支类型">
+          <button
+            type="button"
+            className={form.type === 'expense' ? 'selected' : ''}
+            onClick={() => changeType('expense')}
+          >
+            支出
           </button>
-        ))}
-      </div>
-
-      <div className="save-strip">
-        <div className="save-date-shortcuts">
-          <button type="button" onClick={() => setForm({ ...form, date: todayISO() })}>
-            今天
-          </button>
-          <button type="button" onClick={() => setForm({ ...form, date: addDays(-1) })}>
-            昨天
+          <button
+            type="button"
+            className={form.type === 'income' ? 'selected income' : ''}
+            onClick={() => changeType('income')}
+          >
+            收入
           </button>
         </div>
-        <button className="primary-action" type="submit">
-          保存
-        </button>
-      </div>
 
-      <div className="category-grid">
-        {categoryOptions.map((category) => (
-          <button
-            key={category}
-            type="button"
-            className={form.category === category ? 'selected' : ''}
-            onClick={() => setForm({ ...form, category })}
-          >
-            {category}
+        <label className="amount-field">
+          <span>金额</span>
+          <input
+            inputMode="decimal"
+            value={form.amount}
+            onChange={(event) => {
+              setForm({ ...form, amount: event.target.value })
+              setFormError('')
+            }}
+            placeholder="0.00"
+          />
+        </label>
+        {formError && <p className="form-error">{formError}</p>}
+
+        <div className="quick-amounts" aria-label="常用金额">
+          {quickAmounts.map((amount) => (
+            <button type="button" key={amount} onClick={() => setAmount(amount)}>
+              {yuan(amount)}
+            </button>
+          ))}
+        </div>
+
+        <div className="save-strip">
+          <div className="save-date-shortcuts">
+            <button type="button" onClick={() => setForm({ ...form, date: todayISO() })}>
+              今天
+            </button>
+            <button type="button" onClick={() => setForm({ ...form, date: addDays(-1) })}>
+              昨天
+            </button>
+          </div>
+          <button className="primary-action" type="submit">
+            保存
           </button>
-        ))}
-      </div>
+        </div>
 
-      <div className="tag-add">
-        <input
-          value={newCategory}
-          onChange={(event) => setNewCategory(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault()
-              submitCategory()
-            }
-          }}
-          placeholder={form.type === 'expense' ? '新增支出标签' : '新增收入标签'}
-        />
-        <button type="button" onClick={submitCategory}>新增</button>
-      </div>
+        <div className="category-grid">
+          {categoryOptions.map((category) => (
+            <button
+              key={category}
+              type="button"
+              className={form.category === category ? 'selected' : ''}
+              onClick={() => setForm({ ...form, category })}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
 
-      <label className="field">
-        <span>备注</span>
-        <input
-          value={form.note}
-          onChange={(event) => setForm({ ...form, note: event.target.value })}
-          placeholder="比如：早餐、房租、打车"
-        />
-      </label>
+        <details className="entry-more">
+          <summary>备注、日期、标签</summary>
+          <label className="field">
+            <span>备注</span>
+            <input
+              value={form.note}
+              onChange={(event) => setForm({ ...form, note: event.target.value })}
+              placeholder="比如：早餐、房租、打车"
+            />
+          </label>
 
-      <label className="field">
-        <span>日期</span>
-        <input
-          type="date"
-          value={form.date}
-          onChange={(event) => setForm({ ...form, date: event.target.value })}
-        />
-      </label>
-    </form>
+          <label className="field">
+            <span>日期</span>
+            <input
+              type="date"
+              value={form.date}
+              onChange={(event) => setForm({ ...form, date: event.target.value })}
+            />
+          </label>
+
+          <div className="tag-add">
+            <input
+              value={newCategory}
+              onChange={(event) => setNewCategory(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  submitCategory()
+                }
+              }}
+              placeholder={form.type === 'expense' ? '新增支出标签' : '新增收入标签'}
+            />
+            <button type="button" onClick={submitCategory}>新增</button>
+          </div>
+        </details>
+      </form>
+
+      <SectionTitle title="刚保存的账单" action="最近 5 条" />
+      <TransactionList transactions={recentTransactions} onDelete={onDelete} onEdit={onEdit} />
+    </>
   )
 }
 
@@ -765,7 +960,7 @@ function SectionTitle({ title, action }) {
   )
 }
 
-function TransactionList({ transactions, onDelete, isFiltered, onClearSearch }) {
+function TransactionList({ transactions, onDelete, onEdit, isFiltered, onClearSearch }) {
   if (!transactions.length) {
     return (
       <div className="empty-state">
@@ -796,10 +991,19 @@ function TransactionList({ transactions, onDelete, isFiltered, onClearSearch }) 
             {item.type === 'expense' ? '-' : '+'}
             {yuan(item.amount)}
           </div>
-          {onDelete ? (
-            <button type="button" onClick={() => onDelete(item.id)} aria-label="删除账单">
-              <Trash2 size={16} />
-            </button>
+          {onDelete || onEdit ? (
+            <div className="transaction-actions">
+              {onEdit ? (
+                <button type="button" onClick={() => onEdit(item)} aria-label="编辑账单">
+                  <Pencil size={15} />
+                </button>
+              ) : null}
+              {onDelete ? (
+                <button type="button" onClick={() => onDelete(item.id)} aria-label="删除账单">
+                  <Trash2 size={16} />
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </article>
       ))}
@@ -807,23 +1011,91 @@ function TransactionList({ transactions, onDelete, isFiltered, onClearSearch }) 
   )
 }
 
-function CategoryPreview({ items, total }) {
+function EditTransactionDialog({ editForm, setEditForm, categories, error, setError, onSave, onClose }) {
+  if (!editForm) return null
+  const categoryOptions = categories[editForm.type]
+
   return (
-    <div className="category-preview">
-      <div className="mini-donut" style={{ '--percent': `${items[0]?.percent || 0}%` }}>
-        <span>{total ? yuan(total) : '暂无'}</span>
-      </div>
-      <div className="preview-bars">
-        {items.map((item) => (
-          <div className="preview-row" key={item.category}>
-            <span>{item.category}</span>
-            <div className="rank-track">
-              <span style={{ width: `${item.percent}%` }} />
-            </div>
-            <b>{item.percent}%</b>
-          </div>
-        ))}
-      </div>
+    <div className="modal-backdrop" role="presentation">
+      <form className="edit-dialog" onSubmit={onSave} role="dialog" aria-modal="true" aria-label="编辑账单">
+        <div className="edit-head">
+          <strong>编辑账单</strong>
+          <button type="button" onClick={onClose} aria-label="关闭编辑">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="type-toggle" role="tablist" aria-label="收支类型">
+          <button
+            type="button"
+            className={editForm.type === 'expense' ? 'selected' : ''}
+            onClick={() => {
+              const nextType = 'expense'
+              setEditForm({ ...editForm, type: nextType, category: categories[nextType][0] })
+            }}
+          >
+            支出
+          </button>
+          <button
+            type="button"
+            className={editForm.type === 'income' ? 'selected income' : ''}
+            onClick={() => {
+              const nextType = 'income'
+              setEditForm({ ...editForm, type: nextType, category: categories[nextType][0] })
+            }}
+          >
+            收入
+          </button>
+        </div>
+        <label className="amount-field compact">
+          <span>金额</span>
+          <input
+            inputMode="decimal"
+            value={editForm.amount}
+            onChange={(event) => {
+              setEditForm({ ...editForm, amount: event.target.value })
+              setError('')
+            }}
+            placeholder="0.00"
+          />
+        </label>
+        {error && <p className="form-error">{error}</p>}
+        <div className="category-grid compact-grid">
+          {categoryOptions.map((category) => (
+            <button
+              key={category}
+              type="button"
+              className={editForm.category === category ? 'selected' : ''}
+              onClick={() => setEditForm({ ...editForm, category })}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
+        <label className="field">
+          <span>备注</span>
+          <input
+            value={editForm.note}
+            onChange={(event) => setEditForm({ ...editForm, note: event.target.value })}
+            placeholder="备注，可不填"
+          />
+        </label>
+        <label className="field">
+          <span>日期</span>
+          <input
+            type="date"
+            value={editForm.date}
+            onChange={(event) => setEditForm({ ...editForm, date: event.target.value })}
+          />
+        </label>
+        <div className="edit-actions">
+          <button type="button" onClick={onClose}>
+            取消
+          </button>
+          <button className="primary-action" type="submit">
+            保存修改
+          </button>
+        </div>
+      </form>
     </div>
   )
 }
@@ -874,6 +1146,35 @@ function formatDate(value, today = todayISO()) {
   if (value === today) return '今天'
   if (value === addDays(-1, dateFromISO(today))) return '昨天'
   return value.slice(5).replace('-', '/')
+}
+
+function sortCategoriesByUse(categoryList, type, transactions) {
+  const baseIndex = new Map(categoryList.map((category, index) => [category, index]))
+  const usage = new Map()
+  transactions
+    .filter((item) => item.type === type)
+    .forEach((item) => {
+      const current = usage.get(item.category) || { count: 0, lastUsed: 0 }
+      current.count += 1
+      current.lastUsed = Math.max(current.lastUsed, Number(item.createdAt) || 0)
+      usage.set(item.category, current)
+    })
+
+  return [...categoryList].sort((a, b) => {
+    const usageA = usage.get(a) || { count: 0, lastUsed: 0 }
+    const usageB = usage.get(b) || { count: 0, lastUsed: 0 }
+    return (
+      usageB.count - usageA.count ||
+      usageB.lastUsed - usageA.lastUsed ||
+      (baseIndex.get(a) ?? 0) - (baseIndex.get(b) ?? 0)
+    )
+  })
+}
+
+function daysRemainingInMonth(today) {
+  const date = dateFromISO(today)
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate()
+  return lastDay - date.getDate() + 1
 }
 
 function formatPeriodLabel(key, period, today = todayISO()) {
@@ -958,6 +1259,8 @@ function buildStats(transactions, budget, today = todayISO()) {
   const yearExpense = yearItems
     .filter((item) => item.type === 'expense')
     .reduce((sum, item) => sum + Number(item.amount), 0)
+  const daysLeftInMonth = daysRemainingInMonth(today)
+  const dailyAllowance = daysLeftInMonth ? Math.max((budget - expense) / daysLeftInMonth, 0) : 0
   const categoryMap = monthItems
     .filter((item) => item.type === 'expense')
     .reduce((map, item) => {
@@ -981,6 +1284,7 @@ function buildStats(transactions, budget, today = todayISO()) {
     balance: income - expense,
     budget,
     remainingBudget: Math.max(budget - expense, 0),
+    dailyAllowance,
     budgetPercent,
     budgetTone,
     budgetMessage:
