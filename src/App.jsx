@@ -19,7 +19,7 @@ import {
 import './App.css'
 
 const STORAGE_KEY = 'pocket-ledger-state-v1'
-const quickAmounts = [6, 12, 28, 50, 100, 200]
+const quickAmounts = [5, 10, 20, 50, 100, 200]
 const defaultCategories = {
   expense: ['餐饮', '交通', '购物', '居家', '娱乐', '医疗', '其他'],
   income: ['工资', '副业', '红包', '理财', '退款', '其他'],
@@ -56,17 +56,24 @@ const seedTransactions = [
 ]
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+  return toLocalISODate(new Date())
 }
 
-function addDays(days) {
-  const date = new Date()
+function addDays(days, baseDate = new Date()) {
+  const date = new Date(baseDate)
   date.setDate(date.getDate() + days)
-  return date.toISOString().slice(0, 10)
+  return toLocalISODate(date)
 }
 
-function currentMonthISO() {
-  return todayISO().slice(0, 7)
+function toLocalISODate(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function dateFromISO(value) {
+  return new Date(`${value}T00:00:00`)
 }
 
 function yuan(value) {
@@ -129,6 +136,7 @@ function App() {
   const [search, setSearch] = useState('')
   const [formError, setFormError] = useState('')
   const [toast, setToast] = useState(null)
+  const [todayKey, setTodayKey] = useState(todayISO())
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ transactions, budget, categories }))
@@ -140,7 +148,22 @@ function App() {
     }
   }, [])
 
-  const stats = useMemo(() => buildStats(transactions, budget), [transactions, budget])
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setTodayKey((current) => {
+        const next = todayISO()
+        return next === current ? current : next
+      })
+    }, 60000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    const yesterday = addDays(-1, dateFromISO(todayKey))
+    setForm((current) => (current.date === yesterday ? { ...current, date: todayKey } : current))
+  }, [todayKey])
+
+  const stats = useMemo(() => buildStats(transactions, budget, todayKey), [transactions, budget, todayKey])
   const filteredTransactions = useMemo(() => {
     const keyword = search.trim()
     return transactions
@@ -301,7 +324,7 @@ function App() {
             submitTransaction={submitTransaction}
           />
         )}
-        {activeTab === 'stats' && <StatsView stats={stats} transactions={transactions} />}
+        {activeTab === 'stats' && <StatsView stats={stats} transactions={transactions} todayKey={todayKey} />}
         {activeTab === 'settings' && (
           <SettingsView
             budget={budget}
@@ -459,6 +482,20 @@ function AddView({
         ))}
       </div>
 
+      <div className="save-strip">
+        <div className="save-date-shortcuts">
+          <button type="button" onClick={() => setForm({ ...form, date: todayISO() })}>
+            今天
+          </button>
+          <button type="button" onClick={() => setForm({ ...form, date: addDays(-1) })}>
+            昨天
+          </button>
+        </div>
+        <button className="primary-action" type="submit">
+          保存
+        </button>
+      </div>
+
       <div className="category-grid">
         {categoryOptions.map((category) => (
           <button
@@ -504,25 +541,16 @@ function AddView({
           onChange={(event) => setForm({ ...form, date: event.target.value })}
         />
       </label>
-      <div className="date-shortcuts">
-        <button type="button" onClick={() => setForm({ ...form, date: todayISO() })}>
-          今天
-        </button>
-        <button type="button" onClick={() => setForm({ ...form, date: addDays(-1) })}>
-          昨天
-        </button>
-      </div>
-
-      <button className="primary-action" type="submit">
-        保存这一笔
-      </button>
     </form>
   )
 }
 
-function StatsView({ stats, transactions }) {
+function StatsView({ stats, transactions, todayKey }) {
   const [period, setPeriod] = useState('day')
-  const [selectedDate, setSelectedDate] = useState(todayISO())
+  const [selectedDate, setSelectedDate] = useState(todayKey)
+  useEffect(() => {
+    setSelectedDate(todayKey)
+  }, [todayKey])
   const periodViews = {
     day: {
       title: '每天支出',
@@ -586,7 +614,12 @@ function StatsView({ stats, transactions }) {
       <SectionTitle title={period === 'day' ? '最近 30 天日账单' : currentView.title} action={currentView.action} />
       {period === 'day' ? (
         <>
-          <CalendarGrid days={currentView.rows} selectedDate={selectedDay?.key} onSelectDate={setSelectedDate} />
+          <CalendarGrid
+            days={currentView.rows}
+            selectedDate={selectedDay?.key}
+            todayKey={todayKey}
+            onSelectDate={setSelectedDate}
+          />
           <DayBillDetail day={selectedDay} transactions={selectedDayItems} />
         </>
       ) : (
@@ -625,13 +658,13 @@ function StatsView({ stats, transactions }) {
   )
 }
 
-function CalendarGrid({ days, selectedDate, onSelectDate }) {
+function CalendarGrid({ days, selectedDate, todayKey, onSelectDate }) {
   return (
     <div className="calendar-grid" aria-label="最近 30 天日账单">
       {days.map((day) => (
         <button
           type="button"
-          className={`calendar-day ${day.amount ? 'has-spend' : ''} ${day.key === todayISO() ? 'today' : ''} ${day.key === selectedDate ? 'selected' : ''}`}
+          className={`calendar-day ${day.amount ? 'has-spend' : ''} ${day.key === todayKey ? 'today' : ''} ${day.key === selectedDate ? 'selected' : ''}`}
           key={day.key}
           onClick={() => onSelectDate(day.key)}
           style={{ '--intensity': day.intensity }}
@@ -837,17 +870,16 @@ function Toast({ toast, onClose }) {
   )
 }
 
-function formatDate(value) {
-  const today = todayISO()
+function formatDate(value, today = todayISO()) {
   if (value === today) return '今天'
-  if (value === addDays(-1)) return '昨天'
+  if (value === addDays(-1, dateFromISO(today))) return '昨天'
   return value.slice(5).replace('-', '/')
 }
 
-function formatPeriodLabel(key, period) {
+function formatPeriodLabel(key, period, today = todayISO()) {
   if (period === 'day') {
-    if (key === todayISO()) return '今天'
-    if (key === addDays(-1)) return '昨天'
+    if (key === today) return '今天'
+    if (key === addDays(-1, dateFromISO(today))) return '昨天'
     return key.slice(5).replace('-', '/')
   }
   if (period === 'month') {
@@ -857,10 +889,10 @@ function formatPeriodLabel(key, period) {
   return `${key}年`
 }
 
-function expenseRowsByPeriod(transactions, period) {
-  const cutoff = new Date()
+function expenseRowsByPeriod(transactions, period, today = todayISO()) {
+  const cutoff = dateFromISO(today)
   cutoff.setDate(cutoff.getDate() - 29)
-  const cutoffKey = cutoff.toISOString().slice(0, 10)
+  const cutoffKey = toLocalISODate(cutoff)
   const group = new Map()
   transactions
     .filter((item) => item.type === 'expense')
@@ -876,9 +908,9 @@ function expenseRowsByPeriod(transactions, period) {
 
   if (period === 'day') {
     const days = Array.from({ length: 30 }, (_, index) => {
-      const date = new Date()
+      const date = dateFromISO(today)
       date.setDate(date.getDate() - (29 - index))
-      const key = date.toISOString().slice(0, 10)
+      const key = toLocalISODate(date)
       const value = group.get(key) || { key, amount: 0, count: 0 }
       return {
         ...value,
@@ -888,7 +920,7 @@ function expenseRowsByPeriod(transactions, period) {
     const maxAmount = Math.max(...days.map((item) => item.amount), 0)
     return days.map((item) => ({
       ...item,
-      label: formatPeriodLabel(item.key, period),
+      label: formatPeriodLabel(item.key, period, today),
       percent: maxAmount && item.amount ? Math.max(Math.round((item.amount / maxAmount) * 100), 4) : 0,
       intensity: maxAmount && item.amount ? 0.12 + (item.amount / maxAmount) * 0.78 : 0,
     }))
@@ -903,14 +935,13 @@ function expenseRowsByPeriod(transactions, period) {
 
   return limitedRows.map((item) => ({
     ...item,
-    label: formatPeriodLabel(item.key, period),
+    label: formatPeriodLabel(item.key, period, today),
     percent: maxAmount ? Math.max(Math.round((item.amount / maxAmount) * 100), 4) : 0,
   }))
 }
 
-function buildStats(transactions, budget) {
-  const month = currentMonthISO()
-  const today = todayISO()
+function buildStats(transactions, budget, today = todayISO()) {
+  const month = today.slice(0, 7)
   const year = today.slice(0, 4)
   const monthItems = transactions.filter((item) => item.date.startsWith(month))
   const todayItems = transactions.filter((item) => item.date === today)
@@ -960,9 +991,9 @@ function buildStats(transactions, budget) {
           : `还可用 ${yuan(Math.max(budget - expense, 0))}`,
     todayExpense,
     yearExpense,
-    dailyExpenseRows: expenseRowsByPeriod(transactions, 'day'),
-    monthlyExpenseRows: expenseRowsByPeriod(transactions, 'month'),
-    yearlyExpenseRows: expenseRowsByPeriod(transactions, 'year'),
+    dailyExpenseRows: expenseRowsByPeriod(transactions, 'day', today),
+    monthlyExpenseRows: expenseRowsByPeriod(transactions, 'month', today),
+    yearlyExpenseRows: expenseRowsByPeriod(transactions, 'year', today),
     categoryStats: categoryStats.length ? categoryStats : [{ category: '暂无支出', amount: 0, percent: 0 }],
   }
 }

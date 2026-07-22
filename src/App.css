@@ -397,7 +397,7 @@
 .entry-form,
 .settings-list {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   padding: 16px;
 }
 
@@ -413,7 +413,7 @@
 .category-grid button,
 .tag-add button,
 .quick-amounts button,
-.date-shortcuts button,
+.save-date-shortcuts button,
 .primary-action,
 .settings-action {
   min-height: 44px;
@@ -442,7 +442,7 @@
 .amount-field,
 .field {
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
 .amount-field span,
@@ -466,9 +466,9 @@
 }
 
 .amount-field input {
-  height: 70px;
+  height: 58px;
   padding: 0 14px;
-  font-size: 34px;
+  font-size: 30px;
   font-weight: 760;
 }
 
@@ -486,7 +486,7 @@
 }
 
 .quick-amounts,
-.date-shortcuts {
+.save-date-shortcuts {
   display: grid;
   gap: 8px;
 }
@@ -495,16 +495,22 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.date-shortcuts {
+.save-date-shortcuts {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: -6px;
 }
 
 .quick-amounts button,
-.date-shortcuts button {
+.save-date-shortcuts button {
   min-height: 38px;
   color: var(--green);
   background: #edf8f0;
+}
+
+.save-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 8px;
+  align-items: stretch;
 }
 
 .category-grid {
